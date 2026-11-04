@@ -1,0 +1,18 @@
+# firstmate-lite — ground truth is disk; these are local/runtime, not shared.
+
+# Local choices (ARCHITECTURE.md §14: config/ is gitignored)
+config/
+
+# Runtime state
+state/
+
+# node_modules and logs are not shared
+node_modules/
+*.log
+
+# Local runtime data (per-machine registry, prefs, and task records) is not shared.
+data/*
+!data/projects/
+data/projects/*
+# Keep the tracked empty-dir markers
+!data/projects/.gitkeep
