@@ -49,13 +49,14 @@ const DEFAULT_POLICY: ModelPolicy = {
 		"one-liner", "quick", "trivial",
 	],
 	families: {
+		kiro: ["kiro"],
 		gpt: ["gpt", "codex", "openai", "o1", "o3", "o4"],
 		claude: ["claude", "anthropic", "sonnet", "opus", "haiku"],
 		kimi: ["kimi", "moonshot"],
 		glm: ["glm", "zhipu"],
 	},
-	familyPriorityReasoningShip: ["claude", "gpt"],
-	familyPriorityCodegenShip: ["gpt", "claude"],
+	familyPriorityReasoningShip: ["kiro", "claude", "gpt"],
+	familyPriorityCodegenShip: ["kiro", "gpt", "claude"],
 };
 
 /** Load the policy from config/model-policy.toml, falling back to defaults. */
