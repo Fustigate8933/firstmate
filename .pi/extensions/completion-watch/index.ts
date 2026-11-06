@@ -33,12 +33,14 @@ import { snapshotOutcome } from "../_shared/outcome.ts";
 import { statusPath as statusPathFor } from "../_shared/paths.ts";
 import {
 	doneSummary,
-	drainWake,
+	clearWake,
 	enqueueWake,
 	isAfk,
+	peekWake,
 	readAllTasks,
 	readTaskRecord,
 } from "../_shared/store.ts";
+import { buildRunningSweep } from "../_shared/summary.ts";
 import type { TaskRecord, WakeEvent } from "../_shared/types.ts";
 
 export default function completionWatch(pi: ExtensionAPI) {
@@ -182,13 +184,30 @@ export default function completionWatch(pi: ExtensionAPI) {
 		}
 	});
 
-	pi.on("before_agent_start", async (_event, _ctx) => {
-		const events = drainWake();
-		if (events.length === 0) return;
+	pi.on("before_agent_start", async (event, _ctx) => {
+		// Non-destructive peek: do NOT truncate the queue here. A before_agent_start
+		// can fire for a turn that is not the user reporting to the first mate
+		// (e.g. our own proactive wake self-trigger under AFK). We only CLEAR events
+		// once they have been emitted into a genuine user-facing turn, so a spurious
+		// early drain can never silently destroy an unreported event.
+		const events = peekWake();
+		const running = buildRunningSweep();
+		if (events.length === 0 && running.length === 0) return;
+
+		// Distinguish a genuine user submit from our own injected wake/reconcile
+		// turn (which re-enters before_agent_start carrying that content as the
+		// prompt). On a self-trigger we still surface, but we do NOT clear — the
+		// events stay queued until a real user turn consumes them.
+		const prompt = (event as { prompt?: string }).prompt ?? "";
+		const isSelfTrigger = prompt.startsWith("# firstmate: crewmate updates") || prompt.startsWith("# firstmate reconcile");
+		if (events.length > 0 && !isSelfTrigger) {
+			clearWake(events);
+		}
+
 		return {
 			message: {
 				customType: "firstmate-wake",
-				content: formatWake(events),
+				content: formatWake(events, running),
 				display: true,
 			},
 		};
@@ -206,8 +225,13 @@ export default function completionWatch(pi: ExtensionAPI) {
 	});
 }
 
-/** Render drained wake events into an injected summary. */
-function formatWake(events: WakeEvent[]): string {
+/**
+ * Render wake events + a non-terminal status sweep into an injected summary.
+ * `events` are terminal transitions (done/blocked/edited) observed since the
+ * last report; `running` are concise per-task lines for tasks that are still
+ * working or still blocked (disk is ground truth).
+ */
+function formatWake(events: WakeEvent[], running: string[] = []): string {
 	const lines: string[] = [];
 	lines.push("# firstmate: crewmate updates");
 	for (const ev of events) {
@@ -217,6 +241,16 @@ function formatWake(events: WakeEvent[]): string {
 			lines.push(`- ⚠ ${ev.project}/${ev.id} is BLOCKED — ${ev.summary ?? "needs your input"}`);
 		} else {
 			lines.push(`- ✎ ${ev.project}/${ev.id} was edited (${ev.summary ?? ""})`);
+		}
+	}
+	if (running.length > 0) {
+		// Don't repeat a task that already has a fresh transition line above.
+		const reported = new Set(events.map((e) => `${e.project}/${e.id}`));
+		const sweep = running.filter((l) => ![...reported].some((k) => l.includes(` ${k} `)));
+		if (sweep.length > 0) {
+			if (events.length > 0) lines.push("");
+			lines.push("Still in flight (from disk):");
+			lines.push(...sweep);
 		}
 	}
 	lines.push("");

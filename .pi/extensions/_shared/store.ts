@@ -291,18 +291,35 @@ export function peekWake(): WakeEvent[] {
 }
 
 /**
- * Atomically drain the queue: read all events, truncate the file, return them.
- * Called from before_agent_start on every turn ("always flush all").
+ * Stable identity of a wake event: kind + task + observation timestamp. Two calls
+ * to enqueueWake for the same transition carry the same `at`, so this dedupes a
+ * re-observed event and lets clearWake() remove exactly the reported ones.
  */
-export function drainWake(): WakeEvent[] {
-	const events = peekWake();
-	// Truncate by atomic rename to empty.
+function wakeEventId(ev: WakeEvent): string {
+	return `${ev.kind}\u0000${ev.project}\u0000${ev.id}\u0000${ev.at}`;
+}
+
+/**
+ * Idempotent consume-and-clear: remove ONLY the given (already-reported) events
+ * from the queue, preserving any other events (including ones appended
+ * concurrently). Returns the events that remain queued.
+ *
+ * This replaces the old eager-truncate drain. The invariant it guarantees: an
+ * event is removed from the queue only after it has actually been emitted into a
+ * user-facing summary, so a spurious before_agent_start (e.g. a crewmate's own
+ * pi session starting, or our own proactive wake self-trigger) cannot silently
+ * destroy an unreported event.
+ */
+export function clearWake(reported: WakeEvent[]): WakeEvent[] {
+	if (reported.length === 0) return peekWake();
+	const reportedIds = new Set(reported.map(wakeEventId));
+	const remaining = peekWake().filter((e) => !reportedIds.has(wakeEventId(e)));
 	try {
-		writeAtomic(wakeQueuePath(), "");
+		writeAtomic(wakeQueuePath(), remaining.map((e) => JSON.stringify(e)).join("\n") + (remaining.length ? "\n" : ""));
 	} catch {
-		// if truncation fails, leave events in place rather than lose them
+		// if the rewrite fails, leave events in place rather than lose them
 	}
-	return events;
+	return remaining;
 }
 
 // ──────────────────────────────────────────────────────────────────────────

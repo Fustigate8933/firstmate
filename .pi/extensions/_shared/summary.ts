@@ -53,6 +53,27 @@ export interface ReconcileSummary {
 	totalTasks: number;
 }
 
+/**
+ * Concise per-task lines for every NON-TERMINAL task (still dispatched/working,
+ * or left blocked), read from disk (ground truth). Terminal tasks — done (incl.
+ * a durable done: marker), failed, or cleaned — are omitted. Used by
+ * completion-watch to surface still-running/still-blocked tasks even when no new
+ * terminal transition happened since the last user message.
+ */
+export function buildRunningSweep(): string[] {
+	const lines: string[] = [];
+	for (const rec of readAllTasks()) {
+		const status = effectiveStatus(rec);
+		if (status === "dispatched") {
+			lines.push(`- \u23f3 ${rec.project}/${rec.id} still running`);
+		} else if (status === "blocked") {
+			const reason = rec.outcome?.summary ?? "";
+			lines.push(`- \u26a0 ${rec.project}/${rec.id} still BLOCKED${reason ? ` — ${reason}` : ""}`);
+		}
+	}
+	return lines;
+}
+
 /** Build the full reconcile summary from disk. */
 export function buildReconcileSummary(): ReconcileSummary {
 	const reg = readRegistry();
